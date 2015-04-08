@@ -37,3 +37,4 @@ bashcommand = "ip netns exec " + nsname + " mount --bind " + lockfilename + " /v
 os.system(bashcommand)
 bashcommand = "ip netns exec " + nsname + " rpcbind"
 os.system(bashcommand)
+
