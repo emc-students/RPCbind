@@ -1,51 +1,69 @@
 #!/bin/bash
 
 usage() {
-    echo "Usage: $0 ns_name [start|stop]"
+    echo "Script usage: $0 ns_name [start|stop]"
 }
 
-start() {
+MOUNT_SRC=/var/run/rpcbind.netns
+
+# add_mount <ns> <ext>
+add_mount() {
+    dst=/var/run/rpcbind.$2
+    if [ `mount | grep $dst | wc -l` != 0 ]; then
+        umount $dst 2> /dev/null
+    fi
+    touch $MOUNT_SRC/$1.$2
+    mount --bind $MOUNT_SRC/$1.$2 $dst
+}
+
+# del_mount <ns> <ext>
+del_mount() {
+    umount $MOUNT_SRC/$1.$2 2> /dev/null
+    rm $MOUNT_SRC/$1.$2
+}
+
+start_in_ns() {
+    echo "^^^start^^^"
     ip link set lo up
 
-    touch /tmp/$1.lock
-    mount --bind /tmp/$1.lock /var/run/rpcbind.lock
-
-    touch /tmp/$1.sock
-    mount --bind /tmp/$1.sock /var/run/rpcbind.sock
+    add_mount $1 lock
+    add_mount $1 sock
 
     /sbin/rpcbind
+
+    pid=`lsof -bt -i4 -a -i TCP:sunrpc`
+    echo "pid=$pid"
 }
 
-stop() {
-    # Find PID of process listening on TCP port 111 (sunrpc) in namespace $1
+stop_in_ns() {
+    echo "^^^stop^^^"
+
     pid=`lsof -bt -i4 -a -i TCP:sunrpc`
+    echo "pid=$pid"
 
     if [ ! -z $pid ]; then
         kill -ABRT $pid
     fi
 
-    # This does not work if another file was mounted on top
-    # Probably we do not need to unmount / rm, only check
-    # in the start() function if mount already exists
-    umount /tmp/$1.lock
-    umount /tmp/$1.sock
-
-    rm /tmp/$1.lock
-    rm /tmp/$1.sock
+    del_mount $1 lock
+    del_mount $1 sock
 }
 
 ### script body ###
 
-ns="$1"
-op="$2"
-
-if [ $# -lt 2 -o -z $ns ]; then
+if [ $# -lt 2 -o -z "$1" ]; then
     usage
     exit 1
 fi
 
+ns="$1"
+op="$2"
+
 case "$op" in
     "start")
+        if [ ! -d $MOUNT_SRC ]; then
+            mkdir -p $MOUNT_SRC
+        fi
         if [ ! -f /var/run/netns/$ns ]; then
             ip netns add "$ns"
         fi
@@ -56,13 +74,14 @@ case "$op" in
         ip netns del "$ns"
         ;;
     "start-in-ns")
-        start "$ns"
+        start_in_ns "$ns"
         ;;
     "stop-in-ns")
-        stop "$ns"
+        stop_in_ns "$ns"
         ;;
     *)
         usage
         exit 1
         ;;
 esac
+
