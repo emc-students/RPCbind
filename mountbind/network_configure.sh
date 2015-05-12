@@ -33,9 +33,6 @@ ip netns exec b ip link set veth2 up
 ip netns exec a ip link set lo up
 ip netns exec b ip link set lo up
 
-sudo rm -rf /lock
-
-
 echo "Network successfuly created                    "
 echo "                                               "
 echo "                              _______________  "
