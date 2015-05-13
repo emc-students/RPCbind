@@ -1,52 +1,87 @@
 #!/bin/bash
-start() {
-	touch /tmp/"$nsname".lock	
-	touch /tmp/"$nsname".sock
-	mount --bind /tmp/"$nsname".lock /var/run/rpcbind.lock
-	mount --bind /tmp/"$nsname".sock /var/run/rpcbind.sock
-	ip netns exec $nsname rpcbind
-	pid=$(pidof rpcbind | awk '{print $1}')
-	echo -n $pid >> /tmp/"$nsname".pid
-	logger "rpcbind in "$nsname" namespace started"
+
+usage() {
+    echo "Script usage: $0 ns_name [start|stop]"
 }
 
-stop() {
-	pid=$(cat /tmp/"$nsname".pid)
-	kill -ABRT $pid
-	umount /tmp/"$nsname".lock
-	umount /tmp/"$nsname".sock
-	rm /tmp/"$nsname".lock
-	rm /tmp/"$nsname".sock
-	rm /tmp/"$nsname".pid
-	logger "rpcbind in "$nsname" namespace stopped"
+MOUNT_SRC=/var/run/rpcbind.netns
+
+# add_mount <ns> <ext>
+add_mount() {
+    dst=/var/run/rpcbind.$2
+    if [ `mount | grep $dst | wc -l` != 0 ]; then
+        umount $dst 2> /dev/null
+    fi
+    touch $MOUNT_SRC/$1.$2
+    mount --bind $MOUNT_SRC/$1.$2 $dst
 }
 
-###main logic###
-if [ $# -lt 2 ];
-	then
-		echo "Script usage: ./nsconfig.sh [NSname] [start/stop]"
-		exit 1
+# del_mount <ns> <ext>
+del_mount() {
+    umount $MOUNT_SRC/$1.$2 2> /dev/null
+    rm $MOUNT_SRC/$1.$2
+}
+
+start_in_ns() {
+    echo "^^^start^^^"
+    ip link set lo up
+
+    add_mount $1 lock
+    add_mount $1 sock
+
+    /sbin/rpcbind
+
+    pid=`lsof -bt -i4 -a -i TCP:sunrpc`
+    echo "pid=$pid"
+}
+
+stop_in_ns() {
+    echo "^^^stop^^^"
+
+    pid=`lsof -bt -i4 -a -i TCP:sunrpc`
+    echo "pid=$pid"
+
+    if [ ! -z $pid ]; then
+        kill -ABRT $pid
+    fi
+
+    del_mount $1 lock
+    del_mount $1 sock
+}
+
+### script body ###
+
+if [ $# -lt 2 -o -z "$1" ]; then
+    usage
+    exit 1
 fi
 
-nsname=$1
-usage=$2
-if [ -z $nsname ]; then 
-		echo "Please enter namespace name"
-		exit 1
-fi
+ns="$1"
+op="$2"
 
-case "$usage" in
-	"start")
-		start
-		;;
-	"stop")
-		stop
-		;;
-	*)
-		echo "Usage ./nsconfig [NSname] [start/stop]"
-		exit 1
-		;;
+case "$op" in
+    "start")
+        if [ ! -d $MOUNT_SRC ]; then
+            mkdir -p $MOUNT_SRC
+        fi
+        if [ ! -f /var/run/netns/$ns ]; then
+            ip netns add "$ns"
+        fi
+        ip netns exec "$ns" $0 "$ns" start-in-ns
+        ;;
+    "stop")
+        ip netns exec "$ns" $0 "$ns" stop-in-ns
+        ip netns del "$ns"
+        ;;
+    "start-in-ns")
+        start_in_ns "$ns"
+        ;;
+    "stop-in-ns")
+        stop_in_ns "$ns"
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
 esac
-
-exit 1
 
